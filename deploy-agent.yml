@@ -1,0 +1,102 @@
+---
+- name: Deploy migration-planner-agent image to FCOS VM
+  hosts: planner_vms
+  gather_facts: false
+
+  vars:
+    image_transport: "{{ 'containers-storage' if image_source.startswith('localhost/') else 'docker' }}"
+    target_image: localhost/migration-planner-agent:latest
+    service_name: planner-agent
+    archive_filename: migration-planner-agent.tar
+    local_archive: "/tmp/{{ archive_filename }}"
+    remote_archive: "/tmp/{{ archive_filename }}"
+
+  vars_prompt:
+    - name: ansible_password
+      prompt: "SSH password for remote host"
+      private: true
+
+  pre_tasks:
+    - name: Validate that image_source is provided
+      ansible.builtin.assert:
+        that:
+          - image_source is defined
+          - image_source | length > 0
+        fail_msg: >-
+          image_source must be set. Pass it with
+          -e image_source=quay.io/org/migration-planner-agent:latest
+        quiet: true
+
+  tasks:
+    # --- 1. Build OCI archive on the control node ---
+    - name: Create OCI archive from source image
+      ansible.builtin.command:
+        cmd: >-
+          skopeo copy
+          {{ image_transport }}:{{ image_source }}
+          oci-archive:{{ local_archive }}
+      delegate_to: localhost
+      run_once: true
+      changed_when: true
+
+    # --- 2. Upload archive to VM ---
+    - name: Upload OCI archive to VM
+      ansible.builtin.copy:
+        src: "{{ local_archive }}"
+        dest: "{{ remote_archive }}"
+        mode: "0644"
+
+    # --- 3. Look up our UID (needed for XDG_RUNTIME_DIR) ---
+    - name: Get UID for current user
+      ansible.builtin.command:
+        cmd: id -u
+      register: uid_result
+      changed_when: false
+
+    - name: Set core_uid fact
+      ansible.builtin.set_fact:
+        core_uid: "{{ uid_result.stdout }}"
+
+    # --- 4. Stop the planner-agent service ---
+    - name: Stop {{ service_name }} quadlet service
+      ansible.builtin.systemd_service:
+        name: "{{ service_name }}"
+        state: stopped
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ core_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ core_uid }}/bus"
+
+    # --- 5. Load new image into containers-storage ---
+    - name: Load OCI archive into containers-storage
+      ansible.builtin.command:
+        cmd: >-
+          skopeo copy
+          oci-archive:{{ remote_archive }}
+          containers-storage:{{ target_image }}
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ core_uid }}"
+      changed_when: true
+
+    # --- 6. Start the planner-agent service ---
+    - name: Start {{ service_name }} quadlet service
+      ansible.builtin.systemd_service:
+        name: "{{ service_name }}"
+        state: started
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ core_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ core_uid }}/bus"
+
+    # --- 7. Cleanup ---
+    - name: Remove OCI archive from VM
+      ansible.builtin.file:
+        path: "{{ remote_archive }}"
+        state: absent
+
+    - name: Remove OCI archive from control node
+      ansible.builtin.file:
+        path: "{{ local_archive }}"
+        state: absent
+      delegate_to: localhost
+      run_once: true

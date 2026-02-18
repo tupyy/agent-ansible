@@ -1,0 +1,12 @@
+---
+all:
+  children:
+    planner_vms:
+      hosts:
+        fcos-vm-01:
+          ansible_host: 192.168.122.10
+          # ansible_host: my-fcos-vm.example.com
+      vars:
+        ansible_user: core
+        ansible_ssh_pass: "{{ ansible_password }}"
+        # ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
