@@ -1,10 +1,11 @@
-# Deploy migration-planner-agent
+# Agent management ansible playbooks
 
-Ansible playbook that deploys a container image to a Fedora CoreOS VM running the
-migration-planner-agent as a Podman quadlet service.
+Ansible playbooks for managing migration-planner-agent on Fedora CoreOS VMs.
 
-It creates an OCI archive from the source image on the control node, uploads it to
-the VM, swaps the image in containers-storage, and restarts the service.
+## Playbooks
+
+- **deploy-agent.yml** - Deploys a container image to FCOS VMs running the agent as a Podman quadlet service. Creates an OCI archive from the source image, uploads it to the VM, swaps the image in containers-storage, and restarts the service.
+- **reset-agent-db.yml** - Resets the agent database by stopping the service, removing the DuckDB file, and restarting the service.
 
 ## Prerequisites
 
@@ -30,19 +31,22 @@ the VM, swaps the image in containers-storage, and restarts the service.
    # edit ansible_host to point to your VM
    ```
 
-2. Run the playbook (you will be prompted for the SSH password):
+2. Run a playbook (you will be prompted for the SSH password):
 
    ```bash
-   # From a remote registry
+   # Deploy from a remote registry
    ansible-playbook deploy-agent.yml -i inventory.yml \
      -e image_source=quay.io/myorg/migration-planner-agent:latest
 
-   # From local podman storage (transport is inferred automatically)
+   # Deploy from local podman storage (transport is inferred automatically)
    ansible-playbook deploy-agent.yml -i inventory.yml \
      -e image_source=localhost/migration-planner-agent:latest
+
+   # Reset the agent database
+   ansible-playbook reset-agent-db.yml -i inventory.yml
    ```
 
-## Variables
+## Variables (deploy-agent.yml)
 
 ### Required
 
@@ -82,7 +86,16 @@ all:
         ansible_ssh_pass: "{{ ansible_password }}"
 ```
 
-## What the playbook does
+## Variables (reset-agent-db.yml)
+
+| Variable | Default | Description |
+|---|---|---|
+| `service_name` | `planner-agent` | Name of the quadlet systemd unit. |
+| `db_path` | `/var/lib/data/agent.duckdb` | Path to the DuckDB database file to remove. |
+
+## What the playbooks do
+
+### deploy-agent.yml
 
 1. **Creates an OCI archive** on the control node via `skopeo copy`
 2. **Uploads** the archive to the VM
@@ -90,3 +103,9 @@ all:
 4. **Loads** the new image into the user's containers-storage via `skopeo copy`
 5. **Starts** the `planner-agent` service
 6. **Cleans up** the temporary archive from both the VM and the control node
+
+### reset-agent-db.yml
+
+1. **Stops** the `planner-agent` quadlet service
+2. **Removes** the DuckDB database file
+3. **Starts** the `planner-agent` service
