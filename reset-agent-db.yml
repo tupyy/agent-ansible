@@ -1,0 +1,48 @@
+---
+- name: Reset migration-planner-agent database
+  hosts: planner_vms
+  gather_facts: false
+
+  vars:
+    service_name: planner-agent
+    db_path: /var/lib/data/agent.duckdb
+
+  vars_prompt:
+    - name: ansible_password
+      prompt: "SSH password for remote host"
+      private: true
+
+  tasks:
+    - name: Get UID for current user
+      ansible.builtin.command:
+        cmd: id -u
+      register: uid_result
+      changed_when: false
+
+    - name: Set core_uid fact
+      ansible.builtin.set_fact:
+        core_uid: "{{ uid_result.stdout }}"
+
+    - name: Stop {{ service_name }} quadlet service
+      ansible.builtin.systemd_service:
+        name: "{{ service_name }}"
+        state: stopped
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ core_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ core_uid }}/bus"
+
+    - name: Remove agent database
+      ansible.builtin.file:
+        path: "{{ db_path }}"
+        state: absent
+      become: true
+
+    - name: Start {{ service_name }} quadlet service
+      ansible.builtin.systemd_service:
+        name: "{{ service_name }}"
+        state: started
+        scope: user
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ core_uid }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ core_uid }}/bus"
